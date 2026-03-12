@@ -1,4 +1,5 @@
 import CrawlerWidget from "@/components/CrawlerWidget";
+import DocumentList from "@/components/DocumentList";
 import AgentChat from "@/components/AgentChat";
 import { PlaneTakeoff, ShieldCheck } from "lucide-react";
 
@@ -26,7 +27,7 @@ export default function Home() {
       <main className="flex-1 w-full max-w-6xl p-6 lg:p-10 flex flex-col lg:flex-row gap-8 items-start justify-center">
         
         {/* Left Column: Crawler & Ingestion */}
-        <div className="flex-1 w-full flex flex-col gap-6">
+        <div className="flex-1 w-full flex flex-col gap-8">
           <section>
             <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-3">1. Alimentación de Datos</h2>
             <p className="text-sm text-slate-600 mb-4">
@@ -34,12 +35,20 @@ export default function Home() {
             </p>
             <CrawlerWidget />
           </section>
+
+          <section>
+            <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-3">2. Archivos Indexados</h2>
+            <p className="text-sm text-slate-600 mb-4">
+              Visualiza el estado de tus documentos y descarga los reportes en Excel directamente.
+            </p>
+            <DocumentList />
+          </section>
         </div>
 
         {/* Right Column: Agent Chat */}
         <div className="flex-1 w-full flex flex-col gap-6">
           <section>
-            <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-3">2. Centro de Control Inteligente</h2>
+            <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-3">3. Centro de Control Inteligente</h2>
             <p className="text-sm text-slate-600 mb-4">
               Pide al asistente organizar documentos, buscar PN/SN específicos, o auditar el estado de mantenimiento mediante copias atómicas a carpetas de exportación.
             </p>

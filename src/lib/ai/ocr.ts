@@ -36,24 +36,24 @@ export async function extractOcrFromImage(base64Image: string, mimeType: string)
     };
   }
 
-  const prompt = `Analiza este documento aeronáutico. Extrae SOLO el primer Part Number y Serial Number que encuentres.
+  const prompt = `Analiza este documento aeronáutico detalladamente.
+Extrae el Part Number (PN) y Serial Number (SN) principal.
+Extrae TODO el contenido del documento, especialmente las tablas, en formato Markdown para que sea buscable.
 
 Responde en JSON:
 {
   "metadata_extracted": {
-    "PN": "primer Part Number o null",
-    "SN": "primer Serial Number o null",
+    "PN": "Part Number o null",
+    "SN": "Serial Number o null",
     "condicion": "New, Overhauled, Repaired, Serviceable, o null",
     "document_type": "Form One, Logbook, AD, u Otro"
   },
-  "text": "Resumen breve del contenido del documento en máximo 300 caracteres"
+  "text": "Contenido completo del documento en Markdown incluyendo tablas"
 }
 
-PN y SN deben ser valores SIMPLES, no listas. El campo text es un RESUMEN BREVE.`;
+Responde SOLO el JSON.`;
 
-  // gemini-2.0-flash-lite: 30 RPM, 1500 RPD en plan gratuito
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${GEMINI_API_KEY}`;
-
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
   const MAX_RETRIES = 3;
   
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -70,24 +70,22 @@ PN y SN deben ser valores SIMPLES, no listas. El campo text es un RESUMEN BREVE.
           }],
           generationConfig: {
             temperature: 0.1,
-            maxOutputTokens: 1024,
+            maxOutputTokens: 8192,
             responseMimeType: "application/json",
           }
         }),
       });
 
       if (response.status === 429) {
-        // Rate limit - esperar el tiempo sugerido por la API
         const errorData = await response.json();
         const retryDelay = errorData?.error?.details?.find((d: any) => d.retryDelay)?.retryDelay;
         const waitSeconds = retryDelay ? parseInt(retryDelay) + 2 : 30;
-        console.warn(`[OCR] Rate limit (429), intento ${attempt}/${MAX_RETRIES}. Esperando ${waitSeconds}s...`);
+        console.warn(`[OCR] Rate limit (429), reintentando en ${waitSeconds}s...`);
         await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000));
         continue;
       }
 
       if (response.status === 400) {
-        console.warn(`[OCR] Archivo no procesable (400), creando registro básico`);
         return {
           text: '[Archivo no procesable por la API]',
           metadata_extracted: { document_type: 'Otro' }
@@ -113,7 +111,6 @@ PN y SN deben ser valores SIMPLES, no listas. El campo text es un RESUMEN BREVE.
 
     } catch (error: any) {
       if (attempt === MAX_RETRIES) throw error;
-      console.warn(`[OCR] Error intento ${attempt}, reintentando en 5s...`, error.message);
       await new Promise(resolve => setTimeout(resolve, 5000));
     }
   }

@@ -62,9 +62,9 @@ export default function CrawlerWidget() {
           
           setProgress((prev) => ({ ...prev, current: i + 1 }));
           
-          // Esperar 3 segundos entre archivos para no exceder el rate limit
+          // Esperar 10 segundos entre archivos para no exceder el rate limit de la API gratuita
           if (i < total - 1) {
-            await new Promise(resolve => setTimeout(resolve, 3000));
+            await new Promise(resolve => setTimeout(resolve, 10000));
           }
         } catch (fileErr: any) {
           addLog(`❌ Error procesando ${file.name}: ${fileErr.message}`);

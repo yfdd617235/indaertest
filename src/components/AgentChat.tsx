@@ -37,8 +37,14 @@ export default function AgentChat() {
         body: JSON.stringify({ driveFileId, fileName }),
       });
 
+      if (res.status === 429) {
+        const data = await res.json();
+        const waitTime = data.retryAfter || 35;
+        throw new Error(`Límites de cuota alcanzados. Por favor, espera ${waitTime} segundos y vuelve a intentarlo.`);
+      }
+
       if (!res.ok) {
-        const error = await res.json();
+        const error = await res.json().catch(() => ({}));
         throw new Error(error.error || 'Error generando Excel');
       }
 
@@ -47,17 +53,23 @@ export default function AgentChat() {
       const rowCount = res.headers.get('X-Row-Count') || '?';
       const colCount = res.headers.get('X-Col-Count') || '?';
 
-      // Descargar el blob
+      // Descargar el blob con el tipo MIME correcto
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
+      const excelBlob = new Blob([blob], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(excelBlob);
+      
       const a = document.createElement('a');
       const safeName = fileName.replace(/\.[^.]+$/, '');
       a.href = url;
       a.download = `${safeName}.xlsx`;
       document.body.appendChild(a);
       a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      
+      // Delay removal for browser compatibility
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 100);
 
       setMessages(prev => {
         const newMsgs = [...prev];

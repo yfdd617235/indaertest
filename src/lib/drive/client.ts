@@ -127,7 +127,7 @@ export async function copyAndRenameAtomic(
 export async function downloadDriveFile(fileId: string): Promise<ArrayBuffer> {
   const drive = getDriveClient();
   const response = await drive.files.get(
-    { fileId, alt: 'media' },
+    { fileId, alt: 'media', supportsAllDrives: true },
     { responseType: 'arraybuffer' }
   );
   return response.data as ArrayBuffer;

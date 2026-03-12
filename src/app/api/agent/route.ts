@@ -12,7 +12,7 @@ async function askGemini(userMessage: string, documentsContext: string): Promise
   if (!GEMINI_API_KEY) return documentsContext; // Fallback sin IA
 
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${GEMINI_API_KEY}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -61,34 +61,58 @@ export async function POST(req: Request) {
     // SUPERPODER: Exportar tabla a Excel
     // ============================================
     const intentExcel = /excel|exportar?\s*tabla|generar?\s*tabla|tabla\s*excel|ldnd|status.*excel|excel.*status/i.test(message);
-    const fileNameMatch = message.match(/([a-zA-Z0-9_\s()-]+\.(?:pdf|jpg|jpeg|png|gif))/i);
+    
+    // Regex mejorada: busca palabras largas que parezcan nombres de archivos, con o sin extensión
+    const fileNameMatch = message.match(/([a-zA-Z0-9_-]+\.(?:pdf|jpg|jpeg|png|gif|xlsx?|csv))/i) 
+                        || message.match(/(?:archivo|documento|de|sobre)\s+([a-zA-Z0-9_-]+)/i)
+                        || message.match(/([0-9]{5,})/i); // IDs numéricos largos típicos de archivos
 
     if (intentExcel && fileNameMatch) {
-      const searchName = fileNameMatch[1].trim();
+      let searchName = fileNameMatch[1] || fileNameMatch[0];
+      searchName = searchName.trim();
       
-      // Buscar el archivo en la DB
+      console.log(`[Agent] Intent Excel detectado para: ${searchName}`);
+
+      // Buscar el archivo en la DB con búsqueda flexible
       const { data: docs } = await supabase
         .from('documents')
-        .select('id, name, drive_file_id, metadata')
-        .ilike('name', `%${searchName}%`)
+        .select('id, name, drive_file_id, metadata, status')
+        .or(`name.ilike.%${searchName}%,name.ilike.%${searchName}.pdf%`)
+        .order('created_at', { ascending: false })
         .limit(1);
 
       if (docs && docs.length > 0) {
+        let reply = `📊 ¡Encontré el archivo **${docs[0].name}**! `;
+        if (docs[0].status === 'error') {
+          reply += `(Nota: Este archivo tuvo errores durante la lectura automática, pero intentaré generar el Excel de todas formas...)`;
+        } else {
+          reply += `Estoy generando el Excel ahora...`;
+        }
+
         return NextResponse.json({
-          reply: `📊 ¡Encontré el archivo **${docs[0].name}**! Estoy generando el Excel ahora...`,
+          reply,
           action: 'EXPORT_EXCEL',
           driveFileId: docs[0].drive_file_id,
           fileName: docs[0].name,
         });
       }
 
-      // Si no está en la DB, buscar directo en el mensaje algo que parezca un drive ID
+      // Si no está en la DB, pero parece un Drive ID (20+ caracteres alfanuméricos)
+      if (searchName.length > 20 && /^[a-zA-Z0-9_-]+$/.test(searchName)) {
+        return NextResponse.json({
+          reply: `📊 Generando Excel directamente desde Drive ID: ${searchName}...`,
+          action: 'EXPORT_EXCEL',
+          driveFileId: searchName,
+          fileName: 'export',
+        });
+      }
+
       return NextResponse.json({
-        reply: `No encontré el archivo "${searchName}" en la base de datos indexada. Asegúrate de que haya sido procesado durante la ingesta. Si tienes el Drive ID del archivo, puedes escribir: "exportar excel drive ID_DEL_ARCHIVO"`,
+        reply: `No encontré el archivo "${searchName}" en la base de datos de AeroTrace. Asegúrate de que el nombre sea correcto o que haya sido procesado en la Ingesta.`,
       });
     }
 
-    // Detectar intent de excel con Drive ID directo
+    // Detectar intent de excel con Drive ID directo (fallback)
     if (intentExcel) {
       const driveIdMatch = message.match(/(?:drive|id)\s+([a-zA-Z0-9_-]{20,})/i);
       if (driveIdMatch) {
