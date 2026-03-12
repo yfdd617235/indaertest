@@ -52,6 +52,8 @@ export async function listFilesInFolder(folderId: string): Promise<DriveFile[]> 
         fields: 'nextPageToken, files(id, name, mimeType, parents)',
         pageToken: pageToken,
         pageSize: 1000,
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
       });
       
       if (res.data.files) {

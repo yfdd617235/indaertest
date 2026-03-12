@@ -35,7 +35,8 @@ export default function CrawlerWidget() {
       setStatus("processing");
       addLog(`Se encontraron ${total} archivos. Iniciando Ingesta por lotes...`);
 
-      // 2. Process recursively client-side (1 by 1 or small batch to avoid Vercel timeouts)
+      // Procesar archivos UNO POR UNO con delay para respetar rate limits de Gemini
+      // gemini-2.0-flash-lite: 30 RPM → procesamos 1 cada 3 segundos = 20 RPM (seguro)
       for (let i = 0; i < total; i++) {
         const file = files[i];
         try {
@@ -52,12 +53,22 @@ export default function CrawlerWidget() {
             }),
           });
           
-          if (!ingestRes.ok) throw new Error(await ingestRes.text());
+          if (!ingestRes.ok) {
+            const errData = await ingestRes.text();
+            addLog(`⚠️ Error en ${file.name}: ${errData.slice(0, 150)}`);
+          } else {
+            addLog(`✅ ${file.name} completado.`);
+          }
           
           setProgress((prev) => ({ ...prev, current: i + 1 }));
+          
+          // Esperar 3 segundos entre archivos para no exceder el rate limit
+          if (i < total - 1) {
+            await new Promise(resolve => setTimeout(resolve, 3000));
+          }
         } catch (fileErr: any) {
           addLog(`❌ Error procesando ${file.name}: ${fileErr.message}`);
-          // Continuar con el siguiente en vez de fallar todo el crawler
+          setProgress((prev) => ({ ...prev, current: i + 1 }));
         }
       }
 

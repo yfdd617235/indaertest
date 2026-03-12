@@ -1,16 +1,22 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Send, Bot, User, Loader2 } from "lucide-react";
+import { Send, Bot, User, Loader2, FileSpreadsheet } from "lucide-react";
 
 interface Message {
   role: "user" | "agent";
   content: string;
+  isExcelDownloading?: boolean;
 }
 
 export default function AgentChat() {
   const [messages, setMessages] = useState<Message[]>([
-    { role: "agent", content: "Hola. Soy tu Asistente Aeronáutico. Puedes pedirme que busque documentos, extraiga información o haga copias de certificados en tus carpetas." }
+    { role: "agent", content: `Hola. Soy tu Asistente Aeronáutico. Puedo:
+
+🔍 **Buscar documentos** - "¿Qué info tiene el archivo 0003002047.pdf?"
+📋 **Buscar por PN/SN** - "Busca PN 34600028-1"
+📊 **Exportar a Excel** - "Exportar excel B13 Certified Status.pdf"
+📁 **Copiar archivos** - "Copia PN XXX a carpeta YYY"` }
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -19,6 +25,66 @@ export default function AgentChat() {
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Manejar la descarga de Excel
+  const handleExcelExport = async (driveFileId: string, fileName: string) => {
+    setMessages(prev => [...prev, { role: "agent", content: "⏳ Descargando y analizando el documento con IA... Esto puede tardar 15-30 segundos.", isExcelDownloading: true }]);
+
+    try {
+      const res = await fetch("/api/extract-table", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ driveFileId, fileName }),
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || 'Error generando Excel');
+      }
+
+      // Extraer metadata de los headers
+      const tableName = res.headers.get('X-Table-Name') || 'Datos';
+      const rowCount = res.headers.get('X-Row-Count') || '?';
+      const colCount = res.headers.get('X-Col-Count') || '?';
+
+      // Descargar el blob
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const safeName = fileName.replace(/\.[^.]+$/, '');
+      a.href = url;
+      a.download = `${safeName}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      setMessages(prev => {
+        const newMsgs = [...prev];
+        // Reemplazar el mensaje de "descargando" con el resultado
+        const lastIdx = newMsgs.findLastIndex(m => m.isExcelDownloading);
+        if (lastIdx >= 0) {
+          newMsgs[lastIdx] = {
+            role: "agent",
+            content: `✅ **¡Excel generado!** Se descargó automáticamente.\n\n📊 Tabla: "${tableName}"\n📏 ${rowCount} filas × ${colCount} columnas\n📁 Archivo: ${safeName}.xlsx`
+          };
+        }
+        return newMsgs;
+      });
+    } catch (error: any) {
+      setMessages(prev => {
+        const newMsgs = [...prev];
+        const lastIdx = newMsgs.findLastIndex(m => m.isExcelDownloading);
+        if (lastIdx >= 0) {
+          newMsgs[lastIdx] = {
+            role: "agent",
+            content: `❌ Error generando Excel: ${error.message}`
+          };
+        }
+        return newMsgs;
+      });
+    }
+  };
 
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return;
@@ -39,6 +105,11 @@ export default function AgentChat() {
 
       const data = await res.json();
       setMessages(prev => [...prev, { role: "agent", content: data.reply }]);
+
+      // Si el agente detectó que hay que exportar a Excel, lanzar la descarga
+      if (data.action === 'EXPORT_EXCEL' && data.driveFileId) {
+        setTimeout(() => handleExcelExport(data.driveFileId, data.fileName), 500);
+      }
     } catch (error) {
       setMessages(prev => [...prev, { role: "agent", content: "❌ Ocurrió un error al procesar tu solicitud." }]);
     } finally {
@@ -51,6 +122,7 @@ export default function AgentChat() {
       <div className="p-4 border-b flex items-center gap-2">
         <Bot className="w-5 h-5 text-blue-600" />
         <h2 className="font-semibold text-slate-800">Agente de Organización</h2>
+        <span className="ml-auto text-xs text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full font-medium">✨ Superpoderes</span>
       </div>
       
       <div className="flex-1 p-4 overflow-y-auto space-y-4">
@@ -62,7 +134,14 @@ export default function AgentChat() {
             <div className={`px-4 py-2 rounded-2xl text-sm max-w-[80%] ${
               msg.role === "user" ? "bg-blue-600 text-white rounded-tr-none" : "bg-slate-100 text-slate-800 rounded-tl-none whitespace-pre-wrap"
             }`}>
-              {msg.content}
+              {msg.isExcelDownloading ? (
+                <div className="flex items-center gap-2">
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-600 animate-pulse" />
+                  <span>{msg.content}</span>
+                </div>
+              ) : (
+                msg.content
+              )}
             </div>
           </div>
         ))}
@@ -86,7 +165,7 @@ export default function AgentChat() {
           <input
             type="text"
             className="flex-1 border-2 border-slate-300 bg-slate-50 text-slate-900 placeholder-slate-400 rounded-full px-5 text-sm font-medium outline-none focus:border-blue-500 focus:bg-white transition-colors shadow-sm"
-            placeholder='Ej: "Busca certificados para el PN 12345 y cópialos a la carpeta X..."'
+            placeholder='Ej: "Exportar excel B13 Status.pdf" o "Busca PN 12345"'
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && sendMessage()}

@@ -13,6 +13,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing file details' }, { status: 400 });
     }
 
+    console.log(`[Ingest] Inicia proceso para: ${fileName} (${driveFileId})`);
     const supabase = getSupabaseServer();
 
     // 1. Initial Insert or check if exists
@@ -34,7 +35,7 @@ export async function POST(req: Request) {
         .insert({
           drive_file_id: driveFileId,
           name: fileName,
-          original_path: parents?.[0] || 'root',
+          original_path: (Array.isArray(parents) && parents.length > 0) ? parents[0] : 'root',
           status: 'processing',
         })
         .select('id')
@@ -45,6 +46,7 @@ export async function POST(req: Request) {
     }
 
     // 2. Download from Drive
+    console.log(`[Ingest] Descargando desde Google Drive...`);
     const fileBuffer = await downloadDriveFile(driveFileId);
     if (!fileBuffer || fileBuffer.byteLength === 0) {
       throw new Error("Downloaded empty file");
@@ -54,7 +56,9 @@ export async function POST(req: Request) {
     const base64Data = Buffer.from(fileBuffer).toString('base64');
     
     // 3. OCR and Metadata Extraction
+    console.log(`[Ingest] Analizando con IA (OpenRouter/Gemini)...`);
     const extractionResult = await extractOcrFromImage(base64Data, mimeType);
+    console.log(`[Ingest] IA completada. Documento tipo: ${extractionResult.metadata_extracted.document_type}`);
 
     // 4. Update Document Metadata
     const tags = [extractionResult.metadata_extracted.document_type].filter(Boolean);
@@ -70,14 +74,16 @@ export async function POST(req: Request) {
     const chunks = chunkAeronauticalDocument(extractionResult.text, extractionResult.metadata_extracted);
     
     // Insert Chunks
+    console.log(`[Ingest] Guardando ${chunks.length} fragmentos vectorizados en Supabase...`);
     for (const chunk of chunks) {
       const embeddingVector = await createEmbedding(chunk.content);
-      await supabase.from('document_chunks').insert({
+      const { error: chunkErr } = await supabase.from('document_chunks').insert({
         document_id: documentId,
         content: chunk.content,
         context: chunk.context,
         embedding: `[${embeddingVector.join(',')}]`, // pgvector format
       });
+      if (chunkErr) console.error("[Ingest] Error guardando fragmento:", chunkErr.message);
     }
 
     // 6. Mark Complete
@@ -86,6 +92,7 @@ export async function POST(req: Request) {
       .update({ status: 'complete' })
       .eq('id', documentId);
 
+    console.log(`[Ingest] ✅ ¡ÉXITO! ${fileName} finalizado.`);
     return NextResponse.json({ success: true, documentId });
 
   } catch (error: any) {

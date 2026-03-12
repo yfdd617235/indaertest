@@ -1,25 +1,39 @@
+/**
+ * Implementación de Google Gemini Embeddings (Nativo)
+ * Usamos text-embedding-004 para generar vectores de 768 dimensiones.
+ */
+
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+
 export async function createEmbedding(text: string): Promise<number[]> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) throw new Error("Missing OPENROUTER_API_KEY");
+  if (!GEMINI_API_KEY) {
+    throw new Error("Missing GEMINI_API_KEY for embeddings");
+  }
 
-  // En producción usamos un endpoint de embeddings. OpenRouter no ofrece endpoint nativo de embeddings estándar en v1/embeddings,
-  // pero podemos usar una API de embeddings compatible con OpenAI como Jina, Nomic, o Voyage si están configuradas.
-  // Por simplicidad en este prototipo, simularemos el vector de 1536 dimensiones si no hay un servicio de openrouter.
-  // Pero lo ideal es usar, por ejemplo, el cliente de OpenAI apuntando a un servicio Free Tier.
+  // Endpoint de Google AI para embeddings
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${GEMINI_API_KEY}`;
 
-  // Simulamos un delay y retornamos un vector de 1536 ceros con pequeños valores aleatorios
-  // Este es el contrato para Supabase pgvector(1536).
-  
-  // TO-DO: Reemplazar con llamada real a un API:
-  /*
-  const response = await fetch('https://api.openai.com/v1/embeddings', {
+  try {
+    const response = await fetch(url, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'text-embedding-3-small', input: text })
-  });
-  const data = await response.json();
-  return data.data[0].embedding;
-  */
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: "models/text-embedding-004",
+        content: { parts: [{ text }] }
+      })
+    });
 
-  return Array.from({ length: 1536 }, () => Math.random() * 0.01);
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Gemini Embedding Error: ${error}`);
+    }
+
+    const data = await response.json();
+    return data.embedding.values; // Retorna un array de números (768 dimensiones por defecto)
+  } catch (error) {
+    console.error('[Embeddings] Error:', error);
+    // Fallback: Si falla el API, devolvemos un vector de ceros del tamaño esperado (768)
+    // para evitar que la base de datos explote, pero lo ideal es que no falle.
+    return Array.from({ length: 768 }, () => 0);
+  }
 }

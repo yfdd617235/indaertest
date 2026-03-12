@@ -20,7 +20,7 @@ create table document_chunks (
     document_id uuid references documents(id) on delete cascade not null,
     content text not null, -- El texto de este chunk o fila específica
     context jsonb default '{}'::jsonb, -- Contexto adicional para este chunk (Ej: Cabeceras de la tabla)
-    embedding vector(1536), -- Ajustado para el modelo de OpenAI o similar (o 768 / 1024 dependiendo del modelo embedding). Usaremos 1536 como estándar por ahora.
+    embedding vector(768), -- Ajustado para Gemini text-embedding-004 (768 dimensiones).
     created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
@@ -43,7 +43,7 @@ for each row execute procedure update_modified_column();
 
 -- Función para búsqueda híbrida (Vector + Metadata Filtering)
 create or replace function match_document_chunks_v1(
-    query_embedding vector(1536),
+    query_embedding vector(768),
     match_threshold float,
     match_count int,
     filter_pn text default null,

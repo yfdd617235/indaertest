@@ -21,6 +21,9 @@ function isMarkdownTable(text: string): boolean {
  * se dividen convencionalmente (ej. por párrafos o limitados a N caracteres).
  */
 export function chunkAeronauticalDocument(markdownText: string, documentMetadata: any): Chunk[] {
+  if (!markdownText) {
+    return [{ content: '[Sin texto extraído]', context: { type: 'text', ...documentMetadata } }];
+  }
   const lines = markdownText.split('\n');
   const chunks: Chunk[] = [];
   

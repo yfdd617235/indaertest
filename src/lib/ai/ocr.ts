@@ -1,9 +1,9 @@
 /**
- * Implementación de OpenRouter para extracción OCR
- * Usaremos Gemini 1.5 Flash para tareas de OCR rápidas y estructuradas.
+ * Implementación de Google Gemini API Directa (Nativa) para extracción OCR
+ * Modelo: gemini-2.0-flash-lite → 30 RPM / 1500 RPD en plan gratuito
  */
 
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 export interface ExtractedData {
   text: string;
@@ -16,62 +16,142 @@ export interface ExtractedData {
 }
 
 export async function extractOcrFromImage(base64Image: string, mimeType: string): Promise<ExtractedData> {
-  if (!OPENROUTER_API_KEY) {
-    throw new Error('Falta OPENROUTER_API_KEY en las variables de entorno');
+  if (!GEMINI_API_KEY) {
+    throw new Error('Falta GEMINI_API_KEY en las variables de entorno');
   }
 
-  const prompt = `
-Eres un asistente experto en aviación. Analiza la siguiente imagen/documento y extrae lo siguiente en formato JSON estricto:
+  // Normalizar mimeType
+  const validMimeTypes = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+  let safeMimeType = mimeType?.toLowerCase() || 'application/pdf';
+  if (safeMimeType === 'image/jpg') safeMimeType = 'image/jpeg';
+  if (!validMimeTypes.includes(safeMimeType)) safeMimeType = 'application/pdf';
 
+  // Verificar tamaño (Gemini límite ~20MB en inline_data)
+  const sizeInMB = (base64Image.length * 3) / 4 / 1024 / 1024;
+  if (sizeInMB > 18) {
+    console.warn(`[OCR] Archivo demasiado grande (${sizeInMB.toFixed(1)}MB), saltando...`);
+    return {
+      text: '[Archivo demasiado grande para procesar]',
+      metadata_extracted: { document_type: 'Otro' }
+    };
+  }
+
+  const prompt = `Analiza este documento aeronáutico. Extrae SOLO el primer Part Number y Serial Number que encuentres.
+
+Responde en JSON:
 {
-  "text": "Todo el texto íntegro, manteniendo formato de tabla usando markdown si hay tablas",
   "metadata_extracted": {
-    "PN": "Part Number (si existe)",
-    "SN": "Serial Number (si existe)",
-    "condicion": "Condición (New, Overhauled, Repaired, etc., si existe)",
-    "document_type": "Clasifica en: Form One, Logbook, AD, u Otro"
-  }
+    "PN": "primer Part Number o null",
+    "SN": "primer Serial Number o null",
+    "condicion": "New, Overhauled, Repaired, Serviceable, o null",
+    "document_type": "Form One, Logbook, AD, u Otro"
+  },
+  "text": "Resumen breve del contenido del documento en máximo 300 caracteres"
 }
-Responde estrictamente solo con el JSON sin caracteres Markdown envolventes (sin \`\`\`json).
-  `;
 
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'google/gemini-1.5-flash',
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: prompt },
-            {
-              type: 'image_url',
-              image_url: {
-                url: `data:${mimeType};base64,${base64Image}`,
-              },
-            },
-          ],
-        },
-      ],
-      response_format: { type: 'json_object' },
-    }),
-  });
+PN y SN deben ser valores SIMPLES, no listas. El campo text es un RESUMEN BREVE.`;
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Error en OpenRouter: ${response.status} - ${errorText}`);
+  // gemini-2.0-flash-lite: 30 RPM, 1500 RPD en plan gratuito
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${GEMINI_API_KEY}`;
+
+  const MAX_RETRIES = 3;
+  
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { text: prompt },
+              { inline_data: { mime_type: safeMimeType, data: base64Image } }
+            ]
+          }],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 1024,
+            responseMimeType: "application/json",
+          }
+        }),
+      });
+
+      if (response.status === 429) {
+        // Rate limit - esperar el tiempo sugerido por la API
+        const errorData = await response.json();
+        const retryDelay = errorData?.error?.details?.find((d: any) => d.retryDelay)?.retryDelay;
+        const waitSeconds = retryDelay ? parseInt(retryDelay) + 2 : 30;
+        console.warn(`[OCR] Rate limit (429), intento ${attempt}/${MAX_RETRIES}. Esperando ${waitSeconds}s...`);
+        await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000));
+        continue;
+      }
+
+      if (response.status === 400) {
+        console.warn(`[OCR] Archivo no procesable (400), creando registro básico`);
+        return {
+          text: '[Archivo no procesable por la API]',
+          metadata_extracted: { document_type: 'Otro' }
+        };
+      }
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Error en Gemini API: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+      
+      if (!data.candidates?.[0]?.content?.parts?.[0]?.text) {
+        return {
+          text: '[Sin contenido extraíble]',
+          metadata_extracted: { document_type: 'Otro' }
+        };
+      }
+
+      const rawContent = data.candidates[0].content.parts[0].text.trim();
+      return parseGeminiResponse(rawContent);
+
+    } catch (error: any) {
+      if (attempt === MAX_RETRIES) throw error;
+      console.warn(`[OCR] Error intento ${attempt}, reintentando en 5s...`, error.message);
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
   }
 
-  const data = await response.json();
-  const rawContent = data.choices[0].message.content;
+  throw new Error('Se agotaron los reintentos');
+}
 
+function parseGeminiResponse(rawContent: string): ExtractedData {
   try {
-    return JSON.parse(rawContent) as ExtractedData;
+    const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
+    const jsonString = jsonMatch ? jsonMatch[0] : rawContent;
+    return JSON.parse(jsonString) as ExtractedData;
   } catch (e) {
-    throw new Error('Error parseando JSON de OpenRouter: ' + rawContent);
+    // Reparar JSON truncado
+    let repaired = rawContent;
+    if (!repaired.endsWith('}')) {
+      const quoteCount = (repaired.match(/"/g) || []).length;
+      if (quoteCount % 2 !== 0) repaired += '"';
+      const openBraces = (repaired.match(/{/g) || []).length;
+      const closeBraces = (repaired.match(/}/g) || []).length;
+      for (let i = 0; i < (openBraces - closeBraces); i++) repaired += '}';
+    }
+
+    try {
+      return JSON.parse(repaired) as ExtractedData;
+    } catch {
+      // Extraer con regex como último recurso
+      const pnMatch = rawContent.match(/"PN"\s*:\s*"([^"]+)"/);
+      const snMatch = rawContent.match(/"SN"\s*:\s*"([^"]+)"/);
+      const typeMatch = rawContent.match(/"document_type"\s*:\s*"([^"]+)"/);
+      return {
+        text: rawContent.slice(0, 300),
+        metadata_extracted: {
+          PN: pnMatch?.[1] || undefined,
+          SN: snMatch?.[1] || undefined,
+          document_type: typeMatch?.[1] || 'Otro'
+        }
+      };
+    }
   }
 }
